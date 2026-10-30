@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{DeckingType, FramingSpecies, LumberSize, MaterialChoices};
+use crate::model::{DeckingType, FramingSpecies, LumberSize, MaterialChoices, PostSize};
 
 /// Store department, used to group the pick list the way the store is laid out.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -33,7 +33,7 @@ impl Category {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Stock {
     Framing(LumberSize),
-    Post6x6,
+    Post(PostSize),
     RailPost4x4,
     Decking,
     Fascia,
@@ -105,7 +105,7 @@ fn even_feet(from: u32, to: u32) -> Vec<u32> {
 impl Stock {
     pub fn category(self) -> Category {
         match self {
-            Stock::Framing(_) | Stock::Post6x6 => Category::Lumber,
+            Stock::Framing(_) | Stock::Post(_) => Category::Lumber,
             Stock::Decking | Stock::Fascia | Stock::Riser1x8 => Category::Decking,
             Stock::RailPost4x4 => Category::Railing,
         }
@@ -118,7 +118,7 @@ impl Stock {
                 size.label(),
                 species_label(m.framing)
             ),
-            Stock::Post6x6 => "6x6 PT post (ground contact)".into(),
+            Stock::Post(size) => format!("{} PT post (ground contact)", size.label()),
             Stock::RailPost4x4 => "4x4 PT post".into(),
             Stock::Decking => match m.decking {
                 DeckingType::Pt54x6 => "5/4x6 PT radius-edge decking".into(),
@@ -141,7 +141,7 @@ impl Stock {
     pub fn stock_lengths_ft(self, m: &MaterialChoices, max_ft: u32) -> Vec<u32> {
         let all = match self {
             Stock::Framing(_) => even_feet(8, 20),
-            Stock::Post6x6 => vec![8, 10, 12, 16],
+            Stock::Post(_) => vec![8, 10, 12, 16],
             Stock::RailPost4x4 => vec![8, 10, 12],
             Stock::Decking => match m.decking {
                 DeckingType::Pt54x6 => vec![8, 10, 12, 16, 20],
@@ -173,8 +173,8 @@ impl Stock {
 pub enum Item {
     JoistHanger(LumberSize),
     HurricaneTie,
-    PostBase6x6,
-    PostCap { plies: u8 },
+    PostBase(PostSize),
+    PostCap { post: PostSize, plies: u8 },
     ConnectorScrews,
     FramingScrews,
     LedgerFastener { lags: bool },
@@ -219,8 +219,10 @@ impl Item {
         match self {
             Item::JoistHanger(s) => format!("Joist hanger, {} (galvanized)", s.label()),
             Item::HurricaneTie => "Hurricane tie, joist-to-beam".into(),
-            Item::PostBase6x6 => "Post base, 6x6 adjustable".into(),
-            Item::PostCap { plies } => format!("Post-beam cap, 6x6 to {plies}-ply beam"),
+            Item::PostBase(post) => format!("Post base, {} adjustable", post.label()),
+            Item::PostCap { post, plies } => {
+                format!("Post-beam cap, {} to {plies}-ply beam", post.label())
+            }
             Item::ConnectorScrews => "Structural connector screws #9 x 1-1/2\" (100 ct)".into(),
             Item::FramingScrews => "Exterior framing screws 3\" (5 lb box, ~350 ct)".into(),
             Item::LedgerFastener { lags: true } => {

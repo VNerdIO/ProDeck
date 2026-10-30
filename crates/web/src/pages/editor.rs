@@ -36,6 +36,7 @@ pub fn new_project() -> Project {
             fastening: Fastening::FaceScrews,
             railing: RailingType::WoodBalusters,
             footing: FootingType::PouredBags,
+            post_size: PostSize::SixBy6,
             ledger_fastener: LedgerFastener::StructuralScrews,
             joist_spacing: None,
             min_joist: LumberSize::TwoBy8,
@@ -407,12 +408,13 @@ fn SectionCard(project: RwSignal<Project>, e: Edit, i: usize, count: Memo<usize>
                 .unwrap_or_default()
         })
     });
-    let axis = Signal::derive(move || {
+    // Builders choose board direction; joists run across it.
+    let decking = Signal::derive(move || {
         project.with(|p| {
             p.sections
                 .get(i)
-                .map(|s| s.joists_along)
-                .unwrap_or(Axis::NorthSouth)
+                .map(|s| s.joists_along.perpendicular())
+                .unwrap_or(Axis::EastWest)
         })
     });
     let ledger =
@@ -448,21 +450,22 @@ fn SectionCard(project: RwSignal<Project>, e: Edit, i: usize, count: Memo<usize>
             <FtIn label="Depth (north-south)" value=sec_num(project, i, |s| s.depth) on_change=sec_set(e, i, |s, v| s.depth = v) />
             <FtIn label="Height, top of deck to grade" value=sec_num(project, i, |s| s.height) on_change=sec_set(e, i, |s, v| s.height = v) />
             <div class="grid2">
-                <EnumSelect label="Joists run" value=axis
-                    options=vec![(Axis::NorthSouth, "North-south"), (Axis::EastWest, "East-west")]
+                <EnumSelect label="Decking runs" value=decking
+                    options=vec![(Axis::EastWest, "East-west"), (Axis::NorthSouth, "North-south")]
                     on_change=Callback::new(move |v: Axis| e.run(Box::new(move |p: &mut Project| {
-                        if let Some(s) = p.sections.get_mut(i) {
-                            s.joists_along = v;
-                            // Keep the ledger perpendicular to the joists.
-                            if s.ledger_edge.is_some_and(|l| l.runs_along() == v) {
-                                s.ledger_edge = Some(if v == Axis::NorthSouth { Edge::North } else { Edge::West });
-                            }
-                        }
+                        // The house wall stays put; boards toward it are explained by the estimate.
+                        if let Some(s) = p.sections.get_mut(i) { s.joists_along = v.perpendicular() }
                     }))) />
                 <OptEnumSelect label="Attached to house" none_label="Freestanding" value=ledger
                     options=EDGES.to_vec()
                     on_change=Callback::new(move |v: Option<Edge>| e.run(Box::new(move |p: &mut Project| {
-                        if let Some(s) = p.sections.get_mut(i) { s.ledger_edge = v }
+                        if let Some(s) = p.sections.get_mut(i) {
+                            s.ledger_edge = v;
+                            // Joists hang from the ledger, so decking turns parallel to the house.
+                            if let Some(l) = v {
+                                s.joists_along = l.runs_along().perpendicular();
+                            }
+                        }
                     }))) />
             </div>
             <OptEnumSelect label="Guard railing" none_label="Automatic (over 30\")" value=railing
@@ -627,10 +630,13 @@ fn MaterialsForm(
                 <EnumSelect label="Footings" value=field!(|p: &Project| p.materials.footing)
                     options=vec![(FootingType::PouredBags, "Poured (bags)"), (FootingType::PrecastBlocks, "Precast blocks")]
                     on_change=setter!(FootingType, |p: &mut Project, v| p.materials.footing = v) />
-                <EnumSelect label="Ledger fasteners" value=field!(|p: &Project| p.materials.ledger_fastener)
-                    options=vec![(LedgerFastener::StructuralScrews, "Structural screws"), (LedgerFastener::HalfInchLags, "1/2\" lags")]
-                    on_change=setter!(LedgerFastener, |p: &mut Project, v| p.materials.ledger_fastener = v) />
+                <EnumSelect label="Posts" value=field!(|p: &Project| p.materials.post_size)
+                    options=vec![(PostSize::SixBy6, "6x6"), (PostSize::FourBy4, "4x4 (where allowed)")]
+                    on_change=setter!(PostSize, |p: &mut Project, v| p.materials.post_size = v) />
             </div>
+            <EnumSelect label="Ledger fasteners" value=field!(|p: &Project| p.materials.ledger_fastener)
+                options=vec![(LedgerFastener::StructuralScrews, "Structural screws"), (LedgerFastener::HalfInchLags, "1/2\" lags")]
+                on_change=setter!(LedgerFastener, |p: &mut Project, v| p.materials.ledger_fastener = v) />
             <Check label="Picture-frame border" value=field!(|p: &Project| p.materials.picture_frame)
                 on_change=setter!(bool, |p: &mut Project, v| p.materials.picture_frame = v) />
             <Check label="Fascia on exposed rims" value=field!(|p: &Project| p.materials.fascia)

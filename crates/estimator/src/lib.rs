@@ -214,8 +214,10 @@ fn validate(p: &Project) -> Result<(), EstimateError> {
             if e.runs_along() == s.joists_along {
                 return Err(EstimateError::new(
                     "ledger_parallel_to_joists",
-                    format!("{name}: the ledger must run across the joists. Put it on a {} edge or change joist direction.",
-                        match s.joists_along { Axis::NorthSouth => "north or south", Axis::EastWest => "east or west" }),
+                    format!(
+                        "{name}: joists hang from the house ledger, so decking on an attached section runs parallel to the house ({}). To run boards toward the house, make the section freestanding (a beam and posts along the house).",
+                        e.runs_along().label()
+                    ),
                     Some(i),
                 ));
             }

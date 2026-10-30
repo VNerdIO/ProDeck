@@ -48,6 +48,13 @@ joist_spans_ft = [6, 8, 10, 12, 14, 16, 18]
 "3-2x10" = ["11-4", "9-10", "8-9",  "8-0",  "7-5",  "6-11", "6-7"]
 "3-2x12" = ["13-2", "11-5", "10-2", "9-4",  "8-7",  "8-1",  "7-7"]
 
+# Maximum post height (inches), underside of beam to top of footing or pier.
+# Source: IRC Table R507.4 (2018/2021). DCA6 Table 4 can be stricter for 4x4 posts carrying
+# large tributary areas; VERIFY against the code your jurisdiction adopts.
+[posts]
+"4x4" = 96
+"6x6" = 168
+
 # Ledger fastener on-center spacing (inches), by joist span, two rows staggered.
 [ledger]
 joist_spans_ft = [6, 8, 10, 12, 14, 16, 18]

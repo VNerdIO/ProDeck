@@ -117,6 +117,9 @@ pub fn PlanView(project: Signal<Project>, est: Signal<EstimateState>) -> impl In
                     <text class="label" x=cx y=cy + fs * 1.0 text-anchor="middle" font-size=fs * 0.8 style="font-weight:400">
                         {format!("{} x {}", fmt_ft_in(s.width), fmt_ft_in(s.depth))}
                     </text>
+                    <text class="label" x=cx y=cy + fs * 2.0 text-anchor="middle" font-size=fs * 0.7 style="font-weight:400">
+                        {format!("Decking {}", d.decking_along.label())}
+                    </text>
                 </g>
             }
         }).collect_view();

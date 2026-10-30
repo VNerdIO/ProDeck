@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::cutopt::{self, StockBoard};
 use crate::geometry::{Point, Segment};
 use crate::materials::{Category, Stock};
-use crate::model::{Edge, FootingType, LumberSize, Project};
+use crate::model::{Axis, Edge, FootingType, LumberSize, PostSize, Project};
 use crate::{EstimateError, Takeoff};
 
 pub const DISCLAIMER: &str =
@@ -72,6 +72,8 @@ pub struct Summary {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SectionDesign {
     pub name: String,
+    /// Axis the decking boards run along (across the joists).
+    pub decking_along: Axis,
     pub joist_size: LumberSize,
     pub joist_spacing: f64,
     pub joist_count: usize,
@@ -99,6 +101,8 @@ pub struct BeamDesign {
     pub max_span: f64,
     pub posts: usize,
     pub post_spacing: f64,
+    /// `None` when the beam bears directly on footings.
+    pub post_size: Option<PostSize>,
     pub footing_diameter: f64,
 }
 

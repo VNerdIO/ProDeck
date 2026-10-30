@@ -36,7 +36,7 @@ pub struct Section {
     pub depth: f64,
     /// Top of decking above finished grade.
     pub height: f64,
-    /// Axis the joists run along.
+    /// Axis the joists run along. Decking runs across the joists, on the other axis.
     #[serde(default = "default_joist_axis")]
     pub joists_along: Axis,
     /// Edge fastened to the house with a ledger; `None` for a freestanding section.
@@ -58,6 +58,22 @@ fn default_joist_axis() -> Axis {
 pub enum Axis {
     NorthSouth,
     EastWest,
+}
+
+impl Axis {
+    pub fn perpendicular(self) -> Axis {
+        match self {
+            Axis::NorthSouth => Axis::EastWest,
+            Axis::EastWest => Axis::NorthSouth,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Axis::NorthSouth => "north-south",
+            Axis::EastWest => "east-west",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -119,6 +135,10 @@ pub struct MaterialChoices {
     pub railing: RailingType,
     #[serde(default)]
     pub footing: FootingType,
+    /// Structural post size. 4x4 is used only where it's allowed (post height, beam bearing);
+    /// other posts are upsized to 6x6 with a warning.
+    #[serde(default)]
+    pub post_size: PostSize,
     #[serde(default)]
     pub ledger_fastener: LedgerFastener,
     /// Joist spacing on center; `None` = widest the decking allows.
@@ -197,6 +217,36 @@ pub enum FootingType {
     PouredBags,
     /// Precast deck blocks (low, freestanding decks only).
     PrecastBlocks,
+}
+
+/// Structural post cross-sections.
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord,
+)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub enum PostSize {
+    #[serde(rename = "4x4")]
+    FourBy4,
+    #[default]
+    #[serde(rename = "6x6")]
+    SixBy6,
+}
+
+impl PostSize {
+    /// Actual width in inches.
+    pub fn width(self) -> f64 {
+        match self {
+            PostSize::FourBy4 => 3.5,
+            PostSize::SixBy6 => 5.5,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PostSize::FourBy4 => "4x4",
+            PostSize::SixBy6 => "6x6",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]

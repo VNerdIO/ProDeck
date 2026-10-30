@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 
 use serde::Deserialize;
 
-use crate::model::{FramingSpecies, JoistSpacing, LedgerFastener, LumberSize};
+use crate::model::{FramingSpecies, JoistSpacing, LedgerFastener, LumberSize, PostSize};
 
 const RAW: &str = include_str!("../data/span_tables.toml");
 
@@ -16,6 +16,7 @@ static TABLES: LazyLock<Tables> =
 struct RawTables {
     joists: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     beams: RawBeams,
+    posts: BTreeMap<String, f64>,
     ledger: RawLedger,
 }
 
@@ -52,6 +53,8 @@ struct Tables {
     beam_cols: Vec<f64>,
     /// species -> beam -> max span inches per joist-span column
     beams: BTreeMap<String, BTreeMap<BeamSize, Vec<f64>>>,
+    /// post size -> max height inches
+    posts: BTreeMap<PostSize, f64>,
     ledger_cols: Vec<f64>,
     lags: Vec<f64>,
     screws: Vec<f64>,
@@ -124,6 +127,20 @@ impl Tables {
             }
             beams.insert(species, m);
         }
+        let mut posts = BTreeMap::new();
+        for (size, max) in raw.posts {
+            let size = match size.as_str() {
+                "4x4" => PostSize::FourBy4,
+                "6x6" => PostSize::SixBy6,
+                _ => return Err(format!("unknown post size {size:?}")),
+            };
+            posts.insert(size, max);
+        }
+        for size in [PostSize::FourBy4, PostSize::SixBy6] {
+            if !posts.contains_key(&size) {
+                return Err(format!("posts: missing {}", size.label()));
+            }
+        }
         let ledger_cols: Vec<f64> = raw
             .ledger
             .joist_spans_ft
@@ -144,6 +161,7 @@ impl Tables {
                 .map(|f| *f as f64 * 12.0)
                 .collect(),
             beams,
+            posts,
             ledger_cols,
             lags: raw.ledger.half_inch_lags,
             screws: raw.ledger.structural_screws,
@@ -194,6 +212,11 @@ pub fn beam_max_span(species: FramingSpecies, beam: BeamSize, joist_span: f64) -
         .get(species_key(species))?
         .get(&beam)
         .map(|v| v[col])
+}
+
+/// Max post height in inches (underside of beam to top of footing).
+pub fn post_max_height(size: PostSize) -> f64 {
+    TABLES.posts[&size]
 }
 
 /// All tabulated beam sizes for a species.

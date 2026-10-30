@@ -7,7 +7,7 @@ use crate::bom::{BeamDesign, FootingDesign, SectionDesign, SectionPlan};
 use crate::cutopt::split_at_supports;
 use crate::geometry::{EdgeInfo, Frame, Point};
 use crate::materials::{decking_spec, Item, Stock};
-use crate::model::{FootingType, JoistSpacing, LumberSize, Project, Section};
+use crate::model::{FootingType, JoistSpacing, LumberSize, PostSize, Project, Section};
 use crate::span_tables::{self, BeamSize};
 use crate::{fmt_ft_in, EstimateError, Takeoff};
 
@@ -17,6 +17,8 @@ const PLY: f64 = 1.5;
 const FOOTING_DIAMETERS: [f64; 7] = [12.0, 16.0, 18.0, 20.0, 24.0, 30.0, 36.0];
 /// Post base standoff plus pier top above grade.
 const POST_BASE_ALLOWANCE: f64 = 3.0;
+/// Shorter than this, the beam bears directly on the footing (no post).
+const MIN_POST_LEN: f64 = 12.0;
 
 /// What later stages (decking, stairs, railing) need from the framing.
 pub(crate) struct Framed {
@@ -93,6 +95,11 @@ pub(crate) fn frame_section(
     let run = frame.run;
     let cross = frame.cross;
     let mut why = Vec::new();
+    why.push(format!(
+        "Decking runs {}, across {} joists.",
+        s.joists_along.perpendicular().label(),
+        s.joists_along.label()
+    ));
 
     if factor < 1.0 {
         t.warn(format!(
@@ -218,10 +225,15 @@ pub(crate) fn frame_section(
     let mut total_posts = 0usize;
     let mut post_len_out: Option<f64> = None;
     let mut footing_d = FOOTING_DIAMETERS[0];
+    // Why chosen 4x4 posts had to be upsized, if they did.
+    let mut upsized: Option<String> = None;
     let footing_depth = p.site.frost_depth.max(12.0);
 
+    let post_len_under =
+        |b: &BeamSize| top_of_joist - jl.depth() - b.size.depth() - POST_BASE_ALLOWANCE;
+
     for (v, carried) in &beam_lines {
-        let best = span_tables::beam_sizes(m.framing)
+        let candidates: Vec<(usize, BeamSize, f64, f64)> = span_tables::beam_sizes(m.framing)
             .into_iter()
             .filter_map(|b: BeamSize| {
                 let max = span_tables::beam_max_span(m.framing, b, *carried)? * factor;
@@ -232,7 +244,33 @@ pub(crate) fn frame_section(
                 let n = (((cross - 2.0 * inset) / max) - EPS).ceil().max(1.0) as usize + 1;
                 Some((n, b, max, inset))
             })
-            .min_by_key(|(n, b, _, _)| (*n, b.plies, b.size));
+            .collect();
+        let fewest_posts = |ok: &dyn Fn(&BeamSize) -> bool| {
+            candidates
+                .iter()
+                .copied()
+                .filter(|(_, b, _, _)| ok(b))
+                .min_by_key(|(n, b, _, _)| (*n, b.plies, b.size))
+        };
+        // With 4x4 posts, prefer a beam narrow enough to sit on them (more posts, but the
+        // size the builder asked for) before falling back to a wider beam on 6x6. Beams low
+        // enough to bear on the footings have no posts, so any width works.
+        let fits_4x4 =
+            |b: &BeamSize| bears_on(PostSize::FourBy4, b) || post_len_under(b) < MIN_POST_LEN;
+        let unconstrained = fewest_posts(&|_| true);
+        let best = match m.post_size {
+            PostSize::FourBy4 => fewest_posts(&fits_4x4).or(unconstrained),
+            PostSize::SixBy6 => unconstrained,
+        };
+        if let (Some((n, b, ..)), Some((n6, b6, ..))) = (best, unconstrained) {
+            if b != b6 {
+                why.push(format!(
+                    "4x4 posts carry at most a 2-ply beam: {} on {n} posts here, where a {} on 6x6 posts would need {n6}.",
+                    b.label(),
+                    b6.label()
+                ));
+            }
+        }
         let Some((posts, beam, max, inset)) = best else {
             return Err(EstimateError::new(
                 "beam",
@@ -263,20 +301,31 @@ pub(crate) fn frame_section(
             (beam.plies - 1) as f64 * (cross / 16.0).ceil() * 2.0,
         );
 
-        let bottom_of_beam = top_of_joist - jl.depth() - beam.size.depth();
-        let post_len = bottom_of_beam - POST_BASE_ALLOWANCE;
-        if post_len >= 12.0 {
-            if post_len > 14.0 * 12.0 {
+        let post_len = post_len_under(&beam);
+        let mut post_size = None;
+        if post_len >= MIN_POST_LEN {
+            let post = choose_post(m.post_size, beam, post_len, &mut upsized);
+            let limit = span_tables::post_max_height(post);
+            if post_len > limit {
                 t.warn(format!(
-                    "{}: posts over 14' exceed DCA6 6x6 limits; needs engineering.",
-                    s.name
+                    "{}: {} posts over {} exceed prescriptive limits; needs engineering.",
+                    s.name,
+                    post.label(),
+                    fmt_ft_in(limit)
                 ));
             }
-            t.cut(Stock::Post6x6, post_len, "Post", posts);
-            t.count(Item::PostBase6x6, posts as f64);
-            t.count(Item::PostCap { plies: beam.plies }, posts as f64);
+            t.cut(Stock::Post(post), post_len, "Post", posts);
+            t.count(Item::PostBase(post), posts as f64);
+            t.count(
+                Item::PostCap {
+                    post,
+                    plies: beam.plies,
+                },
+                posts as f64,
+            );
             t.count(Item::ConnectorScrews, posts as f64 * 24.0);
             post_len_out = Some(post_len_out.map_or(post_len, |x: f64| x.max(post_len)));
+            post_size = Some(post);
         }
 
         // Footing size from tributary load on an interior post.
@@ -302,6 +351,7 @@ pub(crate) fn frame_section(
             max_span: max,
             posts,
             post_spacing,
+            post_size,
             footing_diameter: d,
         });
         why.push(format!(
@@ -316,6 +366,10 @@ pub(crate) fn frame_section(
         plan_beams.push(frame.seg(0.0, *v, cross, *v));
         plan_posts.extend(post_u.iter().map(|u| frame.to_plan(*u, *v)));
         total_posts += posts;
+    }
+
+    if let Some(reason) = upsized {
+        t.warn(format!("{}: {reason}", s.name));
     }
 
     // Footings (one per post).
@@ -442,6 +496,7 @@ pub(crate) fn frame_section(
     Ok(Framed {
         design: SectionDesign {
             name: s.name.clone(),
+            decking_along: s.joists_along.perpendicular(),
             joist_size: jl,
             joist_spacing: sp,
             joist_count,
@@ -463,6 +518,41 @@ pub(crate) fn frame_section(
         joist_u,
         joist_size: jl,
     })
+}
+
+/// Whether a built-up beam fits within the post's width (and its post cap).
+fn bears_on(post: PostSize, beam: &BeamSize) -> bool {
+    beam.plies as f64 * PLY <= post.width() + EPS
+}
+
+/// The post size for one beam line: the requested size where it's allowed, else 6x6.
+/// Records the first reason a 4x4 request was upsized.
+fn choose_post(
+    wanted: PostSize,
+    beam: BeamSize,
+    post_len: f64,
+    upsized: &mut Option<String>,
+) -> PostSize {
+    if wanted == PostSize::SixBy6 {
+        return wanted;
+    }
+    let limit = span_tables::post_max_height(PostSize::FourBy4);
+    let reason = if !bears_on(PostSize::FourBy4, &beam) {
+        format!(
+            "the {} beam is wider than a 4x4 post, so its posts are 6x6.",
+            beam.label()
+        )
+    } else if post_len > limit + EPS {
+        format!(
+            "posts are {} tall; 4x4 posts are limited to {}, so these are 6x6.",
+            fmt_ft_in(post_len),
+            fmt_ft_in(limit)
+        )
+    } else {
+        return wanted;
+    };
+    upsized.get_or_insert(reason);
+    PostSize::SixBy6
 }
 
 #[cfg(test)]

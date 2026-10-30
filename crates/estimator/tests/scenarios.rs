@@ -2,7 +2,7 @@
 //! changes on purpose, re-verify before updating them.
 
 use estimator::materials::Category;
-use estimator::{estimate, Estimate, Project};
+use estimator::{estimate, Axis, Edge, Estimate, PostSize, Project};
 
 fn load(name: &str) -> Project {
     let path = format!("{}/tests/fixtures/{name}.json", env!("CARGO_MANIFEST_DIR"));
@@ -168,4 +168,86 @@ fn snow_load_upsizes_framing() {
     let snow = estimate(&p).unwrap();
     assert!(snow.sections[0].joist_size > base.sections[0].joist_size);
     assert!(snow.warnings.iter().any(|w| w.contains("psf")));
+}
+
+#[test]
+fn decking_runs_across_the_joists() {
+    let e = estimate(&load("attached_12x16_pt")).unwrap();
+    assert_eq!(e.sections[0].decking_along, Axis::EastWest);
+
+    // Boards toward the house need a freestanding section.
+    let mut p = load("attached_12x16_pt");
+    p.sections[0].joists_along = Axis::EastWest;
+    let err = estimate(&p).unwrap_err();
+    assert_eq!(err.code, "ledger_parallel_to_joists");
+    assert!(err.message.contains("freestanding"), "{}", err.message);
+    p.sections[0].ledger_edge = None;
+    p.stairs[0].edge = Edge::South;
+    let e = estimate(&p).unwrap();
+    assert_eq!(e.sections[0].decking_along, Axis::NorthSouth);
+}
+
+#[test]
+fn four_by_four_posts_where_allowed() {
+    let mut p = load("attached_12x16_pt");
+    p.materials.post_size = PostSize::FourBy4;
+    let e = estimate(&p).unwrap();
+    let s = &e.sections[0];
+    // Same 2-2x10 beam: 2 plies (3") sit on a 3-1/2" post. 48 - 1 - 7.25 - 9.25 - 3 = 27.5".
+    assert_eq!(s.beams[0].size, "2-2x10");
+    assert_eq!(s.beams[0].post_size, Some(PostSize::FourBy4));
+    assert_eq!(s.post_length, Some(27.5));
+    assert_eq!(qty(&e, "4x4 PT post (ground contact)"), 1); // three 27.5" posts from one 8'
+    assert_eq!(qty(&e, "Post base, 4x4"), 3);
+    assert_eq!(qty(&e, "Post-beam cap, 4x4 to 2-ply"), 3);
+    assert_eq!(qty(&e, "6x6"), 0);
+    assert!(
+        !e.warnings.iter().any(|w| w.contains("4x4")),
+        "{:?}",
+        e.warnings
+    );
+}
+
+#[test]
+fn tall_four_by_four_posts_are_upsized() {
+    let mut p = load("attached_12x16_pt");
+    p.materials.post_size = PostSize::FourBy4;
+    p.sections[0].height = 120.0;
+    let e = estimate(&p).unwrap();
+    // 120 - 1 - 7.25 - 9.25 - 3 = 99.5" posts, over the 96" 4x4 limit.
+    assert_eq!(e.sections[0].post_length, Some(99.5));
+    assert_eq!(e.sections[0].beams[0].post_size, Some(PostSize::SixBy6));
+    assert_eq!(qty(&e, "Post base, 6x6"), 3);
+    assert_eq!(qty(&e, "4x4 PT post (ground contact)"), 0);
+    assert!(
+        e.warnings
+            .iter()
+            .any(|w| w.contains("4x4 posts are limited")),
+        "{:?}",
+        e.warnings
+    );
+}
+
+#[test]
+fn four_by_four_posts_take_narrower_beams() {
+    let mut p = load("freestanding_20x14_composite");
+    p.sections[0].height = 60.0;
+    let six = estimate(&p).unwrap();
+    assert_eq!(six.sections[0].beams[0].size, "3-2x10");
+    assert_eq!(six.sections[0].beams[0].posts, 3);
+
+    p.materials.post_size = PostSize::FourBy4;
+    let four = estimate(&p).unwrap();
+    let b = &four.sections[0].beams[0];
+    assert_eq!(b.plies, 2);
+    assert_eq!(b.posts, 4);
+    assert_eq!(b.post_size, Some(PostSize::FourBy4));
+    assert_eq!(qty(&four, "Post base, 4x4"), 8);
+
+    // A low deck has no posts, so the post size doesn't change the beams.
+    let mut low = load("freestanding_20x14_composite");
+    low.materials.post_size = PostSize::FourBy4;
+    let e = estimate(&low).unwrap();
+    assert_eq!(e.sections[0].beams[0].size, "3-2x10");
+    assert_eq!(e.sections[0].beams[0].post_size, None);
 }

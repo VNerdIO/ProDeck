@@ -51,7 +51,8 @@ cargo run -p estimator --example dump -- crates/estimator/tests/fixtures/l_shape
 - Sign in: `POST /api/v1/auth/login` (sets an HttpOnly session cookie).
 - API keys: create under **Settings > API Keys** (or `POST /api/v1/api-keys` from a signed-in session). Send
   `Authorization: Bearer pdk_<id>_<secret>`. Every key expires (max 365 days), is shown once, is stored only as a
-  hash, and stops working when revoked or when its owner is disabled. API keys can't create keys or change passwords.
+  hash, and stops working when revoked or when its owner is disabled. API keys can't create keys, set passwords,
+  create users, or change roles (an admin key can still rename, disable, or enable users).
 - Stateless estimate: `POST /api/v1/estimate` with a `Project` body. All lengths are inches.
 - Full reference: `/api/docs` on any running instance.
 

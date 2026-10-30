@@ -21,9 +21,10 @@ use rand::distributions::{Alphanumeric, DistString};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
+use tokio::sync::Semaphore;
 
 use crate::error::{AppError, AppResult};
-use crate::store::{SessionRec, UserRec};
+use crate::store::{SessionRec, UserPatch, UserRec};
 use crate::AppState;
 use api_types::Role;
 
@@ -35,10 +36,15 @@ pub const API_KEY_PREFIX: &str = "pdk_";
 const API_KEY_ID_LEN: usize = 10;
 const API_KEY_SECRET_LEN: usize = 40;
 pub const MIN_PASSWORD_LEN: usize = 10;
+/// Sign-in attempts allowed before the account locks (a success resets the count).
 pub const MAX_FAILED_LOGINS: u32 = 5;
 pub const LOCKOUT_MINUTES: i64 = 15;
 /// Only record `last_used_at` once per this interval per key.
 const LAST_USED_GRANULARITY_SECS: i64 = 60;
+
+/// Each Argon2 hash holds ~19 MiB while it runs. Capping concurrent hashes keeps a burst of
+/// sign-ins from exhausting the instance's memory; extra requests wait their turn.
+static HASH_PERMITS: Semaphore = Semaphore::const_new(4);
 
 /// Hash used when the account doesn't exist, so login timing doesn't reveal valid emails.
 static DUMMY_HASH: LazyLock<String> =
@@ -68,12 +74,19 @@ fn hash_password_blocking(pw: &str) -> String {
 }
 
 pub async fn hash_password(pw: String) -> AppResult<String> {
+    let _permit = HASH_PERMITS
+        .acquire()
+        .await
+        .map_err(|e| AppError::from(anyhow::anyhow!(e)))?;
     tokio::task::spawn_blocking(move || hash_password_blocking(&pw))
         .await
         .map_err(|e| AppError::from(anyhow::anyhow!(e)))
 }
 
 pub async fn verify_password(pw: String, hash: Option<String>) -> bool {
+    let Ok(_permit) = HASH_PERMITS.acquire().await else {
+        return false;
+    };
     tokio::task::spawn_blocking(move || {
         let real = hash.is_some();
         let h = hash.unwrap_or_else(|| DUMMY_HASH.clone());
@@ -88,6 +101,30 @@ pub async fn verify_password(pw: String, hash: Option<String>) -> bool {
     })
     .await
     .unwrap_or(false)
+}
+
+/// Records one more sign-in attempt and applies the lockout policy. Runs inside the store's
+/// atomic update, before the password is checked, so parallel guesses each count.
+pub fn login_attempt(u: &UserRec, now: chrono::DateTime<Utc>) -> UserPatch {
+    match u.locked_until {
+        Some(t) if t > now => UserPatch::default(),
+        lock => {
+            // An expired lock starts a fresh count.
+            let attempts = if lock.is_some() {
+                1
+            } else {
+                u.failed_logins + 1
+            };
+            UserPatch {
+                failed_logins: Some(attempts),
+                locked_until: Some(
+                    (attempts > MAX_FAILED_LOGINS)
+                        .then(|| now + Duration::minutes(LOCKOUT_MINUTES)),
+                ),
+                ..Default::default()
+            }
+        }
+    }
 }
 
 pub fn check_password_policy(pw: &str) -> AppResult<()> {
@@ -279,7 +316,7 @@ async fn auth_api_key(state: &AppState, token: &str) -> AppResult<Auth> {
         let mut key = key.clone();
         key.last_used_at = Some(now);
         tokio::spawn(async move {
-            if let Err(e) = store.put_api_key(&key).await {
+            if let Err(e) = store.record_api_key_use(&key).await {
                 tracing::warn!(error = ?e, "failed to record api key use");
             }
         });
@@ -340,6 +377,35 @@ mod tests {
         assert!(verify_password("correct horse battery".into(), Some(h.clone())).await);
         assert!(!verify_password("wrong".into(), Some(h)).await);
         assert!(!verify_password("anything".into(), None).await);
+    }
+
+    #[test]
+    fn lockout_policy() {
+        let now = Utc::now();
+        let mut u = crate::store::UserRec {
+            id: "u".into(),
+            email: "u@example.com".into(),
+            name: "U".into(),
+            role: Role::Estimator,
+            pw_hash: String::new(),
+            disabled: false,
+            created_at: now,
+            last_login_at: None,
+            failed_logins: 0,
+            locked_until: None,
+        };
+        for n in 1..=MAX_FAILED_LOGINS {
+            login_attempt(&u, now).apply(&mut u);
+            assert_eq!(u.failed_logins, n);
+            assert_eq!(u.locked_until, None);
+        }
+        login_attempt(&u, now).apply(&mut u);
+        let until = u.locked_until.expect("locked after the limit");
+        // While locked, attempts change nothing.
+        assert!(login_attempt(&u, now).fields().is_empty());
+        // After the lock expires the count starts over.
+        login_attempt(&u, until + Duration::seconds(1)).apply(&mut u);
+        assert_eq!((u.failed_logins, u.locked_until), (1, None));
     }
 
     #[test]

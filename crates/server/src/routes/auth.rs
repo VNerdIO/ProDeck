@@ -1,13 +1,16 @@
+use std::sync::Arc;
+
 use api_types::{ApiError, ChangePasswordRequest, LoginRequest, User};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 use axum_extra::extract::CookieJar;
-use chrono::{Duration, Utc};
+use chrono::Utc;
 
 use crate::auth::{self, Auth, Via};
 use crate::error::{AppError, AppResult};
 use crate::routes::user_view;
+use crate::store::UserPatch;
 use crate::AppState;
 
 /// Sign in with email and password; sets the `pd_session` cookie.
@@ -26,42 +29,49 @@ pub async fn login(
         )
     };
     let email = auth::normalize_email(&req.email).map_err(|_| invalid())?;
-    let user = st.store.user_by_email(&email).await?;
-    let now = Utc::now();
-
-    if let Some(u) = &user {
-        if u.locked_until.is_some_and(|t| t > now) {
-            return Err(AppError::new(
-                StatusCode::TOO_MANY_REQUESTS,
-                "locked",
-                format!(
-                    "Too many failed sign-ins. Try again in {} minutes.",
-                    auth::LOCKOUT_MINUTES
-                ),
-            ));
-        }
-    }
-    let ok = auth::verify_password(req.password, user.as_ref().map(|u| u.pw_hash.clone())).await;
-    let Some(mut user) = user else {
+    let Some(user) = st.store.user_by_email(&email).await? else {
+        // Same password work as a real account, so timing doesn't reveal which emails exist.
+        auth::verify_password(req.password, None).await;
         return Err(invalid());
     };
-    if !ok {
-        user.failed_logins += 1;
-        if user.failed_logins >= auth::MAX_FAILED_LOGINS {
-            user.failed_logins = 0;
-            user.locked_until = Some(now + Duration::minutes(auth::LOCKOUT_MINUTES));
-        }
-        st.store.put_user(&user).await?;
+    let now = Utc::now();
+    let user = st
+        .store
+        .update_user(&user.id, Arc::new(move |u| auth::login_attempt(u, now)))
+        .await?
+        .ok_or_else(invalid)?;
+    if user.locked_until.is_some_and(|t| t > now) {
+        return Err(AppError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "locked",
+            format!(
+                "Too many failed sign-ins. Try again in {} minutes.",
+                auth::LOCKOUT_MINUTES
+            ),
+        ));
+    }
+    if !auth::verify_password(req.password, Some(user.pw_hash.clone())).await || user.disabled {
         return Err(invalid());
     }
-    if user.disabled {
-        return Err(invalid());
-    }
-    user.failed_logins = 0;
-    user.locked_until = None;
-    user.last_login_at = Some(now);
-    st.store.put_user(&user).await?;
+    st.store
+        .patch_user(
+            &user.id,
+            UserPatch {
+                failed_logins: Some(0),
+                locked_until: Some(None),
+                last_login_at: Some(now),
+                ..Default::default()
+            },
+        )
+        .await?;
     let token = auth::start_session(&st, &user.id).await?;
+    // An admin may have reset the password or disabled the account while it was being checked.
+    // Their change ends existing sessions, so make sure this new one isn't left behind.
+    let current = st.store.user(&user.id).await?;
+    if current.is_none_or(|c| c.pw_hash != user.pw_hash || c.disabled) {
+        st.store.delete_session(&auth::sha256_hex(&token)).await?;
+        return Err(invalid());
+    }
     Ok((
         jar.add(auth::session_cookie(token, st.cfg.cookie_secure)),
         Json(user_view(&user)),
@@ -111,11 +121,18 @@ pub async fn change_password(
         return Err(AppError::bad_request("Current password is incorrect."));
     }
     auth::check_password_policy(&req.new_password)?;
-    let mut user = a.user.clone();
-    user.pw_hash = auth::hash_password(req.new_password).await?;
-    st.store.put_user(&user).await?;
-    st.store.delete_user_sessions(&user.id).await?;
-    let token = auth::start_session(&st, &user.id).await?;
+    let pw_hash = auth::hash_password(req.new_password).await?;
+    st.store
+        .patch_user(
+            &a.user.id,
+            UserPatch {
+                pw_hash: Some(pw_hash),
+                ..Default::default()
+            },
+        )
+        .await?;
+    st.store.delete_user_sessions(&a.user.id).await?;
+    let token = auth::start_session(&st, &a.user.id).await?;
     Ok((
         jar.add(auth::session_cookie(token, st.cfg.cookie_secure)),
         StatusCode::NO_CONTENT,

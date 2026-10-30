@@ -29,7 +29,9 @@ workspace, API-first: the Axum REST API is the product contract and the Leptos W
 - `crates/server`: `routes/` handlers carry `#[utoipa::path]`; add new handlers to both `routes::api()` and the
   `ApiDoc` paths list (the `openapi_lists_every_route` test checks key routes). Persistence goes through the
   `store::Store` trait (Firestore + in-memory); add methods to both impls. Auth: `auth::Auth` extractor accepts
-  session cookie or `pdk_` bearer key; credential-management endpoints call `require_session()`.
+  session cookie or `pdk_` bearer key; credential-management endpoints (keys, passwords, user creation, roles)
+  call `require_session()`. Change existing users only via `update_user`/`patch_user` and keys via their field
+  methods, never `put_user`/`put_api_key`: whole-record writes race (a sign-in could undo a disable or reset).
 - `crates/web`: Leptos 0.8 CSR. `api.rs` is the only network layer. Results views in `pages/views.rs` are shared by
   the editor and print page. CSS is hand-written, mobile-first (`style/app.css`), 44px tap targets.
 - `infra/`: Terraform. Cloud Run image is managed by CI (`ignore_changes`), not Terraform.

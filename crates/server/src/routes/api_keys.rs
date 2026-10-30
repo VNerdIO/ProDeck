@@ -146,7 +146,7 @@ pub async fn revoke(
     }
     if key.revoked_at.is_none() {
         key.revoked_at = Some(Utc::now());
-        st.store.put_api_key(&key).await?;
+        st.store.revoke_api_key(&key).await?;
         tracing::info!(actor = %a.user.email, key = %key.id, "api key revoked");
     }
     Ok(StatusCode::NO_CONTENT)

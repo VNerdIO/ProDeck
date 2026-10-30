@@ -3,10 +3,13 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use firestore::{jiff::Timestamp, path, FirestoreDb, FirestoreDbOptions};
+use firestore::errors::{BackoffError, FirestoreError};
+use firestore::{
+    jiff::Timestamp, path, FirestoreDb, FirestoreDbOptions, FirestoreWritePrecondition,
+};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use super::{ApiKeyRec, IssuedRec, ProjectRec, Result, SessionRec, Store, UserRec};
+use super::{ApiKeyRec, IssuedRec, ProjectRec, Result, SessionRec, Store, UserRec, UserUpdateFn};
 
 const USERS: &str = "users";
 const SESSIONS: &str = "sessions";
@@ -91,6 +94,28 @@ impl FirestoreStore {
         Ok(())
     }
 
+    /// Writes only `fields` of `v`, and only if the document exists.
+    async fn put_fields<T: Serialize + DeserializeOwned + Send + Sync>(
+        &self,
+        col: &str,
+        id: &str,
+        fields: &[String],
+        v: &T,
+    ) -> Result<()> {
+        let _: T = self
+            .db
+            .fluent()
+            .update()
+            .fields(fields)
+            .in_col(col)
+            .precondition(FirestoreWritePrecondition::Exists(true))
+            .document_id(id)
+            .object(v)
+            .execute()
+            .await?;
+        Ok(())
+    }
+
     async fn delete(&self, col: &str, id: &str) -> Result<()> {
         self.db
             .fluent()
@@ -155,6 +180,41 @@ impl Store for FirestoreStore {
         self.put(USERS, &u.id, u).await
     }
 
+    async fn update_user(&self, id: &str, f: UserUpdateFn) -> Result<Option<UserRec>> {
+        let id = id.to_string();
+        Ok(self
+            .db
+            .run_transaction(move |db, tx| {
+                let (id, f) = (id.clone(), f.clone());
+                Box::pin(async move {
+                    let Some(mut user) = db
+                        .fluent()
+                        .select()
+                        .by_id_in(USERS)
+                        .obj::<UserRec>()
+                        .one(&id)
+                        .await?
+                    else {
+                        return Ok(None);
+                    };
+                    let patch = f(&user);
+                    let fields = patch.fields();
+                    if !fields.is_empty() {
+                        patch.apply(&mut user);
+                        db.fluent()
+                            .update()
+                            .fields(fields)
+                            .in_col(USERS)
+                            .document_id(&id)
+                            .object(&user)
+                            .add_to_transaction(tx)?;
+                    }
+                    Ok::<_, BackoffError<FirestoreError>>(Some(user))
+                })
+            })
+            .await?)
+    }
+
     async fn session(&self, id: &str) -> Result<Option<SessionRec>> {
         Ok(self.get::<SessionDoc>(SESSIONS, id).await?.map(Into::into))
     }
@@ -193,6 +253,16 @@ impl Store for FirestoreStore {
 
     async fn put_api_key(&self, k: &ApiKeyRec) -> Result<()> {
         self.put(API_KEYS, &k.id, k).await
+    }
+
+    async fn record_api_key_use(&self, k: &ApiKeyRec) -> Result<()> {
+        self.put_fields(API_KEYS, &k.id, &[path!(ApiKeyRec::last_used_at)], k)
+            .await
+    }
+
+    async fn revoke_api_key(&self, k: &ApiKeyRec) -> Result<()> {
+        self.put_fields(API_KEYS, &k.id, &[path!(ApiKeyRec::revoked_at)], k)
+            .await
     }
 
     async fn project(&self, id: &str) -> Result<Option<ProjectRec>> {

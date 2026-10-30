@@ -623,3 +623,129 @@ async fn openapi_lists_every_route() {
     }
     assert!(r.body["components"]["securitySchemes"]["api_key"].is_object());
 }
+
+#[tokio::test]
+async fn parallel_guesses_all_count_toward_lockout() {
+    let t = T::new().await;
+    let mut set = tokio::task::JoinSet::new();
+    for _ in 0..20 {
+        let app = t.app.clone();
+        set.spawn(async move {
+            let req = Request::builder()
+                .method(Method::POST)
+                .uri("/api/v1/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"email": "admin@example.com", "password": "wrong-password"}).to_string(),
+                ))
+                .unwrap();
+            app.oneshot(req).await.unwrap().status()
+        });
+    }
+    let statuses = set.join_all().await;
+    let checked = statuses
+        .iter()
+        .filter(|s| **s == StatusCode::UNAUTHORIZED)
+        .count();
+    assert_eq!(checked, auth::MAX_FAILED_LOGINS as usize, "{statuses:?}");
+    let r = t
+        .call(
+            Method::POST,
+            "/api/v1/auth/login",
+            Cred::None,
+            Some(json!({"email": "admin@example.com", "password": ADMIN_PW})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn admin_api_key_cannot_manage_credentials_or_roles() {
+    let t = T::new().await;
+    let admin = t.login("admin@example.com", ADMIN_PW).await;
+    let pat = t.create_user(&admin, "pat@example.com", "estimator").await;
+    let key: CreatedApiKey = t
+        .call(
+            Method::POST,
+            "/api/v1/api-keys",
+            Cred::Cookie(&admin),
+            Some(json!({"name": "admin automation", "expires_in_days": 30})),
+        )
+        .await
+        .json();
+    let path = format!("/api/v1/users/{}", pat.id);
+    for body in [
+        json!({"password": "taken-over-1234"}),
+        json!({"role": "admin"}),
+    ] {
+        let r = t
+            .call(Method::PATCH, &path, Cred::Bearer(&key.token), Some(body))
+            .await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    }
+    let r = t
+        .call(
+            Method::POST,
+            "/api/v1/users",
+            Cred::Bearer(&key.token),
+            Some(json!({"email": "eve@example.com", "name": "Eve", "role": "admin", "password": "user-password-1"})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    // Offboarding automation still works.
+    let r = t
+        .call(
+            Method::PATCH,
+            &path,
+            Cred::Bearer(&key.token),
+            Some(json!({"disabled": true})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t
+        .call(
+            Method::POST,
+            "/api/v1/auth/login",
+            Cred::None,
+            Some(json!({"email": "pat@example.com", "password": "user-password-1"})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn recording_key_use_cannot_undo_a_revoke() {
+    let t = T::new().await;
+    let admin = t.login("admin@example.com", ADMIN_PW).await;
+    let created: CreatedApiKey = t
+        .call(
+            Method::POST,
+            "/api/v1/api-keys",
+            Cred::Cookie(&admin),
+            Some(json!({"name": "k", "expires_in_days": 30})),
+        )
+        .await
+        .json();
+    // A request read the key before the revoke and records its use afterwards.
+    let mut stale = t.store.api_key(&created.key.id).await.unwrap().unwrap();
+    let r = t
+        .call(
+            Method::DELETE,
+            &format!("/api/v1/api-keys/{}", created.key.id),
+            Cred::Cookie(&admin),
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    stale.last_used_at = Some(Utc::now());
+    t.store.record_api_key_use(&stale).await.unwrap();
+    let r = t
+        .call(
+            Method::GET,
+            "/api/v1/me",
+            Cred::Bearer(&created.token),
+            None,
+        )
+        .await;
+    assert_eq!(r.body["code"], "api_key_expired");
+}

@@ -7,7 +7,7 @@ use chrono::Utc;
 use crate::auth::{self, Auth};
 use crate::error::{AppError, AppResult};
 use crate::routes::user_view;
-use crate::store::UserRec;
+use crate::store::{UserPatch, UserRec};
 use crate::AppState;
 
 /// List all users (admin).
@@ -21,16 +21,17 @@ pub async fn list(State(st): State<AppState>, a: Auth) -> AppResult<Json<Vec<Use
     Ok(Json(users))
 }
 
-/// Create a user (admin). There is no self sign-up.
+/// Create a user (admin, signed in: API keys can't create users). There is no self sign-up.
 #[utoipa::path(post, path = "/api/v1/users", tag = "users", request_body = CreateUserRequest,
-    responses((status = 201, body = User), (status = 400, body = ApiError), (status = 409, body = ApiError)),
-    security(("session" = []), ("api_key" = [])))]
+    responses((status = 201, body = User), (status = 400, body = ApiError), (status = 403, body = ApiError), (status = 409, body = ApiError)),
+    security(("session" = [])))]
 pub async fn create(
     State(st): State<AppState>,
     a: Auth,
     Json(req): Json<CreateUserRequest>,
 ) -> AppResult<(StatusCode, Json<User>)> {
     a.require_admin()?;
+    a.require_session()?;
     let email = auth::normalize_email(&req.email)?;
     let name = req.name.trim().to_string();
     if name.is_empty() {
@@ -58,9 +59,12 @@ pub async fn create(
 }
 
 /// Update a user's name, role, disabled flag, or reset their password (admin).
+///
+/// Changing a role or password requires signing in; an API key can only rename, disable or
+/// enable users.
 #[utoipa::path(patch, path = "/api/v1/users/{id}", tag = "users", request_body = UpdateUserRequest,
     params(("id" = String, Path)),
-    responses((status = 200, body = User), (status = 400, body = ApiError), (status = 404, body = ApiError)),
+    responses((status = 200, body = User), (status = 400, body = ApiError), (status = 403, body = ApiError), (status = 404, body = ApiError)),
     security(("session" = []), ("api_key" = [])))]
 pub async fn update(
     State(st): State<AppState>,
@@ -69,7 +73,10 @@ pub async fn update(
     Json(req): Json<UpdateUserRequest>,
 ) -> AppResult<Json<User>> {
     a.require_admin()?;
-    let mut user = st
+    if req.password.is_some() || req.role.is_some() {
+        a.require_session()?;
+    }
+    let user = st
         .store
         .user(&id)
         .await?
@@ -88,29 +95,31 @@ pub async fn update(
             return Err(AppError::bad_request("Can't remove the last active admin."));
         }
     }
+    let mut patch = UserPatch {
+        role: req.role,
+        disabled: req.disabled,
+        ..Default::default()
+    };
     if let Some(name) = req.name {
         let name = name.trim().to_string();
         if name.is_empty() {
             return Err(AppError::bad_request("Name is required."));
         }
-        user.name = name;
+        patch.name = Some(name);
     }
-    if let Some(role) = req.role {
-        user.role = role;
-    }
-    let mut end_sessions = false;
-    if let Some(d) = req.disabled {
-        end_sessions |= d && !user.disabled;
-        user.disabled = d;
-    }
+    let mut end_sessions = disabling;
     if let Some(pw) = req.password {
         auth::check_password_policy(&pw)?;
-        user.pw_hash = auth::hash_password(pw).await?;
-        user.failed_logins = 0;
-        user.locked_until = None;
+        patch.pw_hash = Some(auth::hash_password(pw).await?);
+        patch.failed_logins = Some(0);
+        patch.locked_until = Some(None);
         end_sessions = true;
     }
-    st.store.put_user(&user).await?;
+    let user = st
+        .store
+        .patch_user(&id, patch)
+        .await?
+        .ok_or_else(|| AppError::not_found("User"))?;
     if end_sessions {
         st.store.delete_user_sessions(&user.id).await?;
     }

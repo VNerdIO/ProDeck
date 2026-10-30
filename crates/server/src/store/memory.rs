@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use super::{ApiKeyRec, IssuedRec, ProjectRec, Result, SessionRec, Store, UserRec};
+use super::{ApiKeyRec, IssuedRec, ProjectRec, Result, SessionRec, Store, UserRec, UserUpdateFn};
 
 #[derive(Default)]
 pub struct MemoryStore {
@@ -39,6 +39,14 @@ impl Store for MemoryStore {
     async fn put_user(&self, u: &UserRec) -> Result<()> {
         self.users.write().await.insert(u.id.clone(), u.clone());
         Ok(())
+    }
+
+    async fn update_user(&self, id: &str, f: UserUpdateFn) -> Result<Option<UserRec>> {
+        let mut users = self.users.write().await;
+        Ok(users.get_mut(id).map(|u| {
+            f(u).apply(u);
+            u.clone()
+        }))
     }
 
     async fn session(&self, id: &str) -> Result<Option<SessionRec>> {
@@ -80,6 +88,20 @@ impl Store for MemoryStore {
 
     async fn put_api_key(&self, k: &ApiKeyRec) -> Result<()> {
         self.keys.write().await.insert(k.id.clone(), k.clone());
+        Ok(())
+    }
+
+    async fn record_api_key_use(&self, k: &ApiKeyRec) -> Result<()> {
+        if let Some(stored) = self.keys.write().await.get_mut(&k.id) {
+            stored.last_used_at = k.last_used_at;
+        }
+        Ok(())
+    }
+
+    async fn revoke_api_key(&self, k: &ApiKeyRec) -> Result<()> {
+        if let Some(stored) = self.keys.write().await.get_mut(&k.id) {
+            stored.revoked_at = k.revoked_at;
+        }
         Ok(())
     }
 

@@ -1,0 +1,13 @@
+{
+  "sections": [
+    { "name": "Upper", "x": 0, "y": 0, "width": 192, "depth": 144, "height": 84,
+      "joists_along": "north_south", "ledger_edge": "north" },
+    { "name": "Lower", "x": 0, "y": 144, "width": 120, "depth": 120, "height": 60,
+      "joists_along": "north_south" }
+  ],
+  "stairs": [
+    { "section": 1, "edge": "south", "offset": 36, "width": 48 }
+  ],
+  "materials": { "decking": "composite", "framing": "douglas_fir_larch" },
+  "site": { "frost_depth": 42, "live_load_psf": 40, "soil_bearing_psf": 1500 }
+}

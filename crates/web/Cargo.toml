@@ -1,0 +1,20 @@
+[package]
+name = "web"
+description = "ProDeck web client (Leptos, client-side rendered WASM). Talks only to the public REST API."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+api-types = { path = "../api-types" }
+estimator = { path = "../estimator" }
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock", "wasmbind"] }
+console_error_panic_hook = "0.1"
+gloo-net = { version = "0.6", default-features = false, features = ["http", "json"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
+leptos = { version = "0.8", features = ["csr"] }
+leptos_router = "0.8"
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "Storage", "Navigator", "Clipboard", "Location"] }

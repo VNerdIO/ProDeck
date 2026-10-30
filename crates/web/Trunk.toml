@@ -1,0 +1,11 @@
+[build]
+target = "index.html"
+dist = "../../dist"
+public_url = "/"
+
+[serve]
+port = 8081
+
+# During `trunk serve`, forward API calls to the Rust server on :8080.
+[[proxy]]
+backend = "http://localhost:8080/api/"

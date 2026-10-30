@@ -1,0 +1,9 @@
+{
+  "sections": [
+    { "name": "Patio deck", "x": 0, "y": 0, "width": 240, "depth": 168, "height": 30,
+      "joists_along": "north_south", "railing": true }
+  ],
+  "stairs": [ { "section": 0, "edge": "south", "offset": 96, "width": 48 } ],
+  "materials": { "decking": "composite", "fastening": "hidden_clips", "railing": "panel_kits",
+                 "fascia": true, "picture_frame": true }
+}

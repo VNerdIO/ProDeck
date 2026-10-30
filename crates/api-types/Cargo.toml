@@ -1,0 +1,15 @@
+[package]
+name = "api-types"
+description = "Request/response types for the ProDeck REST API, shared by server and web client"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock", "std"] }
+estimator = { path = "../estimator" }
+utoipa = { version = "5", optional = true, features = ["chrono"] }
+
+[features]
+openapi = ["dep:utoipa", "estimator/openapi"]

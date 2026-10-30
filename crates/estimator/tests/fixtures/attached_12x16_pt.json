@@ -1,0 +1,8 @@
+{
+  "sections": [
+    { "name": "Main", "x": 0, "y": 0, "width": 192, "depth": 144, "height": 48,
+      "joists_along": "north_south", "ledger_edge": "north" }
+  ],
+  "stairs": [ { "section": 0, "edge": "south", "offset": 72, "width": 48 } ],
+  "materials": { "decking": "pt54x6", "framing": "southern_pine" }
+}

@@ -1,0 +1,4 @@
+project_id            = "your-gcp-project"
+region                = "us-central1"
+bootstrap_admin_email = "you@yourcompany.com"
+domain                = "" # e.g. "deck.yourcompany.com" once verified in Search Console

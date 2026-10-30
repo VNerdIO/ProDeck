@@ -251,3 +251,20 @@ fn four_by_four_posts_take_narrower_beams() {
     assert_eq!(e.sections[0].beams[0].size, "3-2x10");
     assert_eq!(e.sections[0].beams[0].post_size, None);
 }
+
+#[test]
+fn estimates_saved_before_new_fields_still_load() {
+    let p = load("attached_12x16_pt");
+    let current = estimate(&p).unwrap();
+    // An issued snapshot from before decking direction and post sizes existed.
+    let mut old = serde_json::to_value(&current).unwrap();
+    for s in old["sections"].as_array_mut().unwrap() {
+        s.as_object_mut().unwrap().remove("decking_along");
+        for b in s["beams"].as_array_mut().unwrap() {
+            b.as_object_mut().unwrap().remove("post_size");
+        }
+    }
+    let mut loaded: Estimate = serde_json::from_value(old).unwrap();
+    loaded.backfill(&p);
+    assert_eq!(loaded, current);
+}

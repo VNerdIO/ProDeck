@@ -31,6 +31,29 @@ pub struct Estimate {
     pub engine_version: String,
 }
 
+/// Issued estimates are stored snapshots, so every field added to the output must
+/// deserialize when absent and be filled in by `Estimate::backfill`.
+fn missing_axis() -> Axis {
+    Axis::NorthSouth
+}
+
+impl Estimate {
+    /// Fills in fields that estimates saved by older engine versions lack, from the input
+    /// saved with them.
+    pub fn backfill(&mut self, input: &Project) {
+        for (d, s) in self.sections.iter_mut().zip(&input.sections) {
+            d.decking_along = s.joists_along.perpendicular();
+            // Before post sizes were selectable every post was 6x6. A current estimate with
+            // posts always names the size on at least one beam.
+            if d.post_length.is_some() && d.beams.iter().all(|b| b.post_size.is_none()) {
+                for b in &mut d.beams {
+                    b.post_size = Some(PostSize::SixBy6);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct LineItem {
@@ -73,6 +96,7 @@ pub struct Summary {
 pub struct SectionDesign {
     pub name: String,
     /// Axis the decking boards run along (across the joists).
+    #[serde(default = "missing_axis")]
     pub decking_along: Axis,
     pub joist_size: LumberSize,
     pub joist_spacing: f64,

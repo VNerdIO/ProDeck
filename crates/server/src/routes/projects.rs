@@ -317,7 +317,9 @@ pub async fn get_issued(
         .await?
         .filter(|r| r.project_id == id)
         .ok_or_else(|| AppError::not_found("Issued estimate"))?;
-    Ok(Json(rec.issued))
+    let mut issued = rec.issued;
+    issued.estimate.backfill(&issued.input);
+    Ok(Json(issued))
 }
 
 /// Estimate any design without saving it (used for live preview while editing).

@@ -23,7 +23,9 @@ workspace, API-first: the Axum REST API is the product contract and the Leptos W
 - `crates/estimator`: pure, deterministic, no I/O. Pipeline in `lib.rs::estimate`: geometry -> framing -> decking ->
   stairs -> railing -> `bom::finish` (cut optimization per `Stock`, packaging per `Item`). Everything is inches.
   Stages push into a shared `Takeoff` (cut pieces, counted items, warnings, tips). Span data lives in
-  `data/span_tables.toml` (DCA6; must be verified before permit use). `tests/scenarios.rs` asserts hand-checked
+  `data/span_tables.toml` (DCA6; must be verified before permit use). Issued estimates store the `Estimate`
+  output as a snapshot, so any field added to it needs a serde default and a fill-in in `Estimate::backfill`
+  (see the `estimates_saved_before_new_fields_still_load` scenario), or old snapshots fail to load. `tests/scenarios.rs` asserts hand-checked
   quantities: if an intentional engine change moves them, re-verify by hand before editing the numbers.
 - `crates/api-types`: request/response DTOs. Changing them changes the public API and the OpenAPI spec.
 - `crates/server`: `routes/` handlers carry `#[utoipa::path]`; add new handlers to both `routes::api()` and the

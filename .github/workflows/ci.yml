@@ -14,7 +14,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -28,7 +28,7 @@ jobs:
         run: cargo clippy --locked -p web --target wasm32-unknown-unknown -- -D warnings
       - name: Test
         run: cargo test --locked
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.5.7"
           terraform_wrapper: false

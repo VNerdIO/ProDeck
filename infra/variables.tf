@@ -31,6 +31,18 @@ variable "bootstrap_admin_email" {
   type        = string
 }
 
+variable "deletion_protection" {
+  description = "Block terraform destroy of the Cloud Run service. Turn on for production."
+  type        = bool
+  default     = false
+}
+
+variable "wif_pool_id" {
+  description = "Workload Identity pool ID. GCP reserves deleted pool IDs for 30 days, so change this if a previous pool was deleted."
+  type        = string
+  default     = "prodeck-github"
+}
+
 variable "max_instances" {
   type    = number
   default = 3

@@ -56,5 +56,5 @@ jobs:
       - name: Smoke test
         run: |
           URL=$(gcloud run services describe prodeck --region "${{ vars.GCP_REGION }}" --project "${{ vars.GCP_PROJECT_ID }}" --format='value(status.url)')
-          curl -fsS "$URL/healthz"
+          curl -fsS "$URL/health"
           curl -fsS -o /dev/null "$URL/api/openapi.json"

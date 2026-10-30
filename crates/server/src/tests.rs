@@ -335,7 +335,12 @@ async fn api_key_lifecycle() {
     );
 
     // A tampered secret fails.
-    let tampered = format!("{}x", &created.token[..created.token.len() - 1]);
+    let last = created.token.chars().last().unwrap();
+    let tampered = format!(
+        "{}{}",
+        &created.token[..created.token.len() - 1],
+        if last == 'x' { 'y' } else { 'x' }
+    );
     assert_eq!(
         t.call(Method::GET, "/api/v1/me", Cred::Bearer(&tampered), None)
             .await

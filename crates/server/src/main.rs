@@ -50,7 +50,10 @@ pub fn app(state: AppState, static_dir: &str) -> Router {
         .nest("/api/v1", routes::api())
         .route("/api/openapi.json", get(routes::openapi_json))
         .route("/api/docs", get(routes::docs))
+        // `/healthz` is for the container probe; Cloud Run's front end reserves it publicly,
+        // so external checks use `/health`.
         .route("/healthz", get(|| async { "ok" }))
+        .route("/health", get(|| async { "ok" }))
         .fallback_service(spa)
         .with_state(state)
         .layer(axum::middleware::map_response(cache_headers))

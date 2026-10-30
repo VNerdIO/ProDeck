@@ -73,7 +73,7 @@ Terraform outputs: `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_IMAGE_REPO` (`image_repo
 (`workload_identity_provider`), `GCP_DEPLOY_SA` (`deployer_service_account`). No JSON keys are needed.
 
 Every push to `main` runs CI, builds the container, pushes it to Artifact Registry, deploys to Cloud Run, and
-smoke-tests `/healthz`.
+smoke-tests `/health`.
 
 First sign-in: the admin email from `terraform.tfvars`, with the password from
 `terraform output -raw bootstrap_admin_password_command | sh`. Change it under Settings.
